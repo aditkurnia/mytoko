@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Online Shop</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.8.1/font/bootstrap-icons.css" rel="stylesheet">
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: Arial, sans-serif;
+            padding-top: 60px;
+        }
+
+        .navbar {
+            position: fixed;
+            top: 0;
+            width: 100%;
+            background: white;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            padding: 1rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            z-index: 1000;
+        }
+
+        .products-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+            gap: 2rem;
+            padding: 2rem;
+        }
+
+        .product-card {
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            padding: 1rem;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+
+        .product-card:hover {
+            transform: translateY(-5px);
+        }
+
+        .product-image {
+            width: 100%;
+            height: 200px;
+            object-fit: cover;
+            border-radius: 4px;
+        }
+
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            justify-content: center;
+            align-items: center;
+        }
+
+        .modal-content {
+            background: white;
+            padding: 2rem;
+            border-radius: 8px;
+            max-width: 500px;
+            width: 90%;
+        }
+
+        .loading {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(255,255,255,0.8);
+            justify-content: center;
+            align-items: center;
+            z-index: 1001;
+        }
+
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3498db;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .notification {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            padding: 1rem;
+            background: white;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+            border-radius: 8px;
+            display: none;
+        }
+        .order-status {
+            position: fixed;
+            bottom: 20px;
+            left: 20px;
+            background: white;
+            padding: 1rem;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+            max-width: 300px;
+            z-index: 1000;
+        }
+
+        .status-item {
+            margin-bottom: 0.5rem;
+            padding: 0.5rem;
+            border-radius: 4px;
+        }
+
+        .status-item.pending {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        .status-item.completed {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .status-item.failed {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .close-status {
+            float: right;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar">
+        <h1>My Shop</h1>
+        <div>
+            <i class="bi bi-cart"></i>
+            <span class="notification-badge">0</span>
+        </div>
+    </nav>
+    <div class="order-status" id="orderStatus">
+        <h3>Status Pesanan <span class="close-status" onclick="toggleStatus()">×</span></h3>
+        <div id="statusList"></div>
+    </div>
+
+    <div class="products-grid" id="productsContainer"></div>
+
+    <div class="modal" id="orderModal">
+        <div class="modal-content">
+            <h2 id="productTitle"></h2>
+            <p>Harga: Rp<span id="productPrice"></span></p>
+            <div class="quantity-control">
+                <button onclick="adjustQuantity(-1)">-</button>
+                <input type="number" id="quantity" value="1" min="1">
+                <button onclick="adjustQuantity(1)">+</button>
+            </div>
+            <select id="paymentMethod">
+                <option value="QRIS">QRIS</option>
+                <option value="Rekening">Rekening Penjual</option>
+            </select>
+            <input type="file" id="paymentProof" accept="image/*">
+            <input type="tel" id="phone" placeholder="Nomor WhatsApp">
+            <button onclick="submitOrder()">Konfirmasi Pesanan</button>
+        </div>
+    </div>
+
+    <div class="loading">
+        <div class="spinner"></div>
+    </div>
+
+    <div class="notification" id="notification"></div>
+
+    <script>
+        let products = JSON.parse(localStorage.getItem('products')) || [
+            {id: 1, name: "Product 1", price: 100000, description: "Deskripsi produk 1", stock: 10, image: "https://via.placeholder.com/200"},
+            {id: 2, name: "Product 2", price: 150000, description: "Deskripsi produk 2", stock: 5, image: "https://via.placeholder.com/200"}
+        ];
+    
+        let orders = JSON.parse(localStorage.getItem('orders')) || [];
+        let selectedProduct = null;
+        const botToken = '7919829077:AAEMRJNRIa0gqWYdm064laq24hKbTAFwoQY';
+        const chatId = '7517453475';
+        let statusVisible = true;
+    
+        // Inisialisasi
+        function init() {
+            renderProducts();
+            renderStatus();
+            checkTelegramUpdates();
+            setInterval(checkTelegramUpdates, 5000);
+        }
+    
+        // Render produk
+        function renderProducts() {
+            const container = document.getElementById('productsContainer');
+            container.innerHTML = products.map(product => `
+                <div class="product-card" onclick="showOrderModal(${product.id})">
+                    <img src="${product.image}" class="product-image">
+                    <h3>${product.name}</h3>
+                    <p>Rp${product.price.toLocaleString()}</p>
+                    <p>Stok: ${product.stock}</p>
+                    <p>${product.description}</p>
+                </div>
+            `).join('');
+        }
+    
+        // Tampilkan modal pesanan
+        function showOrderModal(productId) {
+            selectedProduct = products.find(p => p.id === productId);
+            if(selectedProduct.stock < 1) return alert('Stok habis');
+            
+            document.getElementById('productTitle').textContent = selectedProduct.name;
+            document.getElementById('productPrice').textContent = selectedProduct.price.toLocaleString();
+            document.getElementById('orderModal').style.display = 'flex';
+        }
+    
+        // Adjust quantity
+        function adjustQuantity(change) {
+            const input = document.getElementById('quantity');
+            let newVal = parseInt(input.value) + change;
+            if(newVal < 1) newVal = 1;
+            if(newVal > selectedProduct.stock) newVal = selectedProduct.stock;
+            input.value = newVal;
+        }
+    
+        // Submit pesanan
+        async function submitOrder() {
+            showLoading();
+            
+            const phone = document.getElementById('phone').value.replace(/^0/, '+62');
+            const quantity = parseInt(document.getElementById('quantity').value);
+            const total = selectedProduct.price * quantity;
+            const orderId = Date.now();
+    
+            // Simpan pesanan
+            orders.push({
+                id: orderId,
+                productName: selectedProduct.name,
+                quantity,
+                total,
+                status: 'pending',
+                phone,
+                messageId: null
+            });
+            saveOrders();
+            renderStatus();
+    
+            try {
+                // Kirim bukti pembayaran
+                const photoForm = new FormData();
+                photoForm.append('chat_id', chatId);
+                photoForm.append('photo', document.getElementById('paymentProof').files[0]);
+                photoForm.append('caption', `Pembayaran untuk Order ID: ${orderId}`);
+    
+                await fetch(`https://api.telegram.org/bot${botToken}/sendPhoto`, {
+                    method: 'POST',
+                    body: photoForm
+                });
+    
+                // Kirim detail pesanan
+                const messageRes = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        chat_id: chatId,
+                        text: formatOrderMessage(orderId),
+                        reply_markup: {
+                            inline_keyboard: [[
+                                {text: "✅ Selesai", callback_data: `complete_${orderId}`},
+                                {text: "❌ Gagal", callback_data: `fail_${orderId}`}
+                            ]]
+                        }
+                    })
+                });
+                
+                // Simpan message ID
+                const messageData = await messageRes.json();
+                const orderIndex = orders.findIndex(o => o.id === orderId);
+                orders[orderIndex].messageId = messageData.result.message_id;
+                saveOrders();
+    
+                showNotification('Pesanan berhasil dikirim!');
+                document.getElementById('orderModal').style.display = 'none';
+            } catch (error) {
+                console.error(error);
+                alert('Gagal mengirim pesanan');
+            }
+            
+            hideLoading();
+        }
+    
+        // Format pesan untuk Telegram
+        function formatOrderMessage(orderId) {
+            const order = orders.find(o => o.id === orderId);
+            return `📦 New Order\n
+    Order ID: ${orderId}
+    Product: ${order.productName}
+    Quantity: ${order.quantity}
+    Total: Rp${order.total.toLocaleString()}
+    Phone: ${order.phone}`;
+        }
+    
+        // Cek update dari Telegram
+        async function checkTelegramUpdates() {
+            try {
+                const res = await fetch(`https://api.telegram.org/bot${botToken}/getUpdates`);
+                const data = await res.json();
+                
+                data.result.forEach(async update => {
+                    // Handle stock update
+                    if(update.message?.text?.startsWith('/update_stock')) {
+                        const [_, productId, newStock] = update.message.text.split('_');
+                        updateStock(productId, newStock);
+                    }
+                    
+                    // Handle button click
+                    if(update.callback_query) {
+                        const [action, orderId] = update.callback_query.data.split('_');
+                        const messageId = update.callback_query.message.message_id;
+                        
+                        // Update status
+                        updateOrderStatus(orderId, action);
+                        
+                        // Hapus tombol di Telegram
+                        await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({
+                                callback_query_id: update.callback_query.id
+                            })
+                        });
+                        
+                        await fetch(`https://api.telegram.org/bot${botToken}/editMessageReplyMarkup`, {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({
+                                chat_id: chatId,
+                                message_id: messageId,
+                                reply_markup: {inline_keyboard: []}
+                            })
+                        });
+                    }
+                });
+            } catch (error) {
+                console.error('Error checking updates:', error);
+            }
+        }
+    
+        // Update status pesanan
+        function updateOrderStatus(orderId, status) {
+            const orderIndex = orders.findIndex(o => o.id === Number(orderId));
+            if(orderIndex === -1) return;
+            
+            orders[orderIndex].status = status;
+            saveOrders();
+            renderStatus();
+            showNotification(`Status pesanan #${orderId} diupdate ke ${status}`);
+        }
+    
+        // Update stok
+        function updateStock(productId, newStock) {
+            const product = products.find(p => p.id == productId);
+            if(!product) return;
+            
+            product.stock = parseInt(newStock);
+            localStorage.setItem('products', JSON.stringify(products));
+            renderProducts();
+        }
+    
+        // Render status pesanan
+        function renderStatus() {
+            const statusList = document.getElementById('statusList');
+            statusList.innerHTML = orders.map(order => `
+                <div class="status-item ${order.status}">
+                    <p><strong>#${order.id}</strong></p>
+                    <p>${order.productName} (${order.quantity}x)</p>
+                    <p>Total: Rp${order.total.toLocaleString()}</p>
+                    <p>Status: ${order.status.toUpperCase()}</p>
+                </div>
+            `).join('');
+        }
+    
+        // Toggle panel status
+        function toggleStatus() {
+            statusVisible = !statusVisible;
+            document.getElementById('orderStatus').style.display = statusVisible ? 'block' : 'none';
+        }
+    
+        // Simpan data
+        function saveOrders() {
+            localStorage.setItem('orders', JSON.stringify(orders));
+        }
+    
+        // Loading indicator
+        function showLoading() {
+            document.querySelector('.loading').style.display = 'flex';
+        }
+        
+        function hideLoading() {
+            document.querySelector('.loading').style.display = 'none';
+        }
+    
+        // Notifikasi
+        function showNotification(message) {
+            const notif = document.getElementById('notification');
+            notif.textContent = message;
+            notif.style.display = 'block';
+            setTimeout(() => notif.style.display = 'none', 5000);
+        }
+    
+        // Jalankan aplikasi
+        init();
+    </script>
+</body>
+</html>
