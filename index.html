@@ -193,26 +193,28 @@
     <div class="notification" id="notification"></div>
 
     <script>
+        // Inisialisasi Data
         let products = JSON.parse(localStorage.getItem('products')) || [
-            {id: 1, name: "Lamborghini", price: 100000, description: "Deskripsi produk 1", stock: 10, image: "image.jpg"},
-            {id: 2, name: "PS 5", price: 150000, description: "Deskripsi produk 2", stock: 5, image: "image2.jpg"}
+            {id: 1, name: "Product 1", price: 100000, description: "Deskripsi produk 1", stock: 10, image: "https://via.placeholder.com/200"},
+            {id: 2, name: "Product 2", price: 150000, description: "Deskripsi produk 2", stock: 5, image: "https://via.placeholder.com/200"}
         ];
-    
+        
         let orders = JSON.parse(localStorage.getItem('orders')) || [];
         let selectedProduct = null;
         const botToken = '7919829077:AAEMRJNRIa0gqWYdm064laq24hKbTAFwoQY';
         const chatId = '7517453475';
         let statusVisible = true;
     
-        // Inisialisasi
+        // Inisialisasi Aplikasi
         function init() {
             renderProducts();
             renderStatus();
             checkTelegramUpdates();
             setInterval(checkTelegramUpdates, 5000);
+            localStorage.setItem('products', JSON.stringify(products));
         }
     
-        // Render produk
+        // Render Daftar Produk
         function renderProducts() {
             const container = document.getElementById('productsContainer');
             container.innerHTML = products.map(product => `
@@ -226,61 +228,80 @@
             `).join('');
         }
     
-        // Tampilkan modal pesanan
+        // Tampilkan Modal Pesanan
         function showOrderModal(productId) {
             selectedProduct = products.find(p => p.id === productId);
             if(selectedProduct.stock < 1) return alert('Stok habis');
             
             document.getElementById('productTitle').textContent = selectedProduct.name;
             document.getElementById('productPrice').textContent = selectedProduct.price.toLocaleString();
+            document.getElementById('quantity').value = 1;
             document.getElementById('orderModal').style.display = 'flex';
         }
     
-        // Adjust quantity
+        // Atur Jumlah Pesanan
         function adjustQuantity(change) {
             const input = document.getElementById('quantity');
             let newVal = parseInt(input.value) + change;
-            if(newVal < 1) newVal = 1;
-            if(newVal > selectedProduct.stock) newVal = selectedProduct.stock;
+            newVal = Math.max(1, Math.min(newVal, selectedProduct.stock));
             input.value = newVal;
         }
     
-        // Submit pesanan
+        // Proses Pesanan
         async function submitOrder() {
             showLoading();
             
             const phone = document.getElementById('phone').value.replace(/^0/, '+62');
             const quantity = parseInt(document.getElementById('quantity').value);
-            const total = selectedProduct.price * quantity;
-            const orderId = Date.now();
+            const paymentMethod = document.getElementById('paymentMethod').value;
+            const paymentProof = document.getElementById('paymentProof').files[0];
+            
+            // Validasi
+            if(!paymentProof) {
+                alert('Harap upload bukti pembayaran');
+                hideLoading();
+                return;
+            }
     
-            // Simpan pesanan
+            if(selectedProduct.stock < quantity) {
+                alert('Stok tidak mencukupi');
+                hideLoading();
+                return;
+            }
+    
+            // Kurangi Stok
+            selectedProduct.stock -= quantity;
+            localStorage.setItem('products', JSON.stringify(products));
+            
+            const orderId = Date.now();
+            const total = selectedProduct.price * quantity;
+    
+            // Simpan Pesanan
             orders.push({
                 id: orderId,
+                productId: selectedProduct.id,
                 productName: selectedProduct.name,
                 quantity,
                 total,
                 status: 'pending',
                 phone,
+                paymentMethod,
                 messageId: null
             });
             saveOrders();
+            renderProducts();
             renderStatus();
     
             try {
-                // Kirim bukti pembayaran
+                // Kirim Bukti Pembayaran
                 const photoForm = new FormData();
                 photoForm.append('chat_id', chatId);
-                photoForm.append('photo', document.getElementById('paymentProof').files[0]);
-                photoForm.append('caption', `Pembayaran untuk Order ID: ${orderId}`);
+                photoForm.append('photo', paymentProof);
+                photoForm.append('caption', `Pembayaran Order #${orderId}\nMetode: ${paymentMethod}`);
+                await fetch(`https://api.telegram.org/bot${botToken}/sendPhoto`, {method: 'POST', body: photoForm});
     
-                await fetch(`https://api.telegram.org/bot${botToken}/sendPhoto`, {
-                    method: 'POST',
-                    body: photoForm
-                });
-    
-                // Kirim detail pesanan
-                const messageRes = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+                // Kirim Detail Pesanan
+                const msgRes = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({
@@ -295,63 +316,59 @@
                     })
                 });
                 
-                // Simpan message ID
-                const messageData = await messageRes.json();
+                // Simpan Message ID
+                const msgData = await msgRes.json();
                 const orderIndex = orders.findIndex(o => o.id === orderId);
-                orders[orderIndex].messageId = messageData.result.message_id;
+                orders[orderIndex].messageId = msgData.result.message_id;
                 saveOrders();
     
                 showNotification('Pesanan berhasil dikirim!');
                 document.getElementById('orderModal').style.display = 'none';
             } catch (error) {
-                console.error(error);
-                alert('Gagal mengirim pesanan');
+                // Rollback jika gagal
+                selectedProduct.stock += quantity;
+                localStorage.setItem('products', JSON.stringify(products));
+                renderProducts();
+                alert('Gagal mengirim pesanan: ' + error.message);
             }
             
             hideLoading();
         }
     
-        // Format pesan untuk Telegram
+        // Format Pesan untuk Telegram
         function formatOrderMessage(orderId) {
             const order = orders.find(o => o.id === orderId);
-            return `📦 New Order\n
-    Order ID: ${orderId}
-    Product: ${order.productName}
-    Quantity: ${order.quantity}
-    Total: Rp${order.total.toLocaleString()}
-    Phone: ${order.phone}`;
+            return `📦 NEW ORDER\n
+    🆔 ID: #${orderId}
+    📛 Produk: ${order.productName}
+    🔢 Jumlah: ${order.quantity}
+    💰 Total: Rp${order.total.toLocaleString()}
+    📱 WhatsApp: ${order.phone}
+    💳 Metode: ${order.paymentMethod}`;
         }
     
-        // Cek update dari Telegram
+        // Cek Update dari Telegram
         async function checkTelegramUpdates() {
             try {
                 const res = await fetch(`https://api.telegram.org/bot${botToken}/getUpdates`);
                 const data = await res.json();
                 
-                data.result.forEach(async update => {
-                    // Handle stock update
+                for(const update of data.result) {
+                    // Update Stok
                     if(update.message?.text?.startsWith('/update_stock')) {
                         const [_, productId, newStock] = update.message.text.split('_');
                         updateStock(productId, newStock);
                     }
                     
-                    // Handle button click
+                    // Handle Tombol
                     if(update.callback_query) {
                         const [action, orderId] = update.callback_query.data.split('_');
                         const messageId = update.callback_query.message.message_id;
                         
-                        // Update status
+                        // Update Status
                         updateOrderStatus(orderId, action);
                         
-                        // Hapus tombol di Telegram
-                        await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
-                            method: 'POST',
-                            headers: {'Content-Type': 'application/json'},
-                            body: JSON.stringify({
-                                callback_query_id: update.callback_query.id
-                            })
-                        });
-                        
+                        // Hapus Tombol di Telegram
                         await fetch(`https://api.telegram.org/bot${botToken}/editMessageReplyMarkup`, {
                             method: 'POST',
                             headers: {'Content-Type': 'application/json'},
@@ -362,15 +379,17 @@
                             })
                         });
                     }
-                });
+                }
             } catch (error) {
                 console.error('Error checking updates:', error);
             }
         }
     
-        // Update status pesanan
-        function updateOrderStatus(orderId, status) {
+        // Update Status Pesanan
+        function updateOrderStatus(orderId, action) {
+            const status = action === 'complete' ? 'completed' : 'failed';
             const orderIndex = orders.findIndex(o => o.id === Number(orderId));
+            
             if(orderIndex === -1) return;
             
             orders[orderIndex].status = status;
@@ -379,7 +398,7 @@
             showNotification(`Status pesanan #${orderId} diupdate ke ${status}`);
         }
     
-        // Update stok
+        // Update Stok dari Telegram
         function updateStock(productId, newStock) {
             const product = products.find(p => p.id == productId);
             if(!product) return;
@@ -387,9 +406,10 @@
             product.stock = parseInt(newStock);
             localStorage.setItem('products', JSON.stringify(products));
             renderProducts();
+            showNotification(`Stok ${product.name} diupdate ke ${newStock}`);
         }
     
-        // Render status pesanan
+        // Render Status Pesanan
         function renderStatus() {
             const statusList = document.getElementById('statusList');
             statusList.innerHTML = orders.map(order => `
@@ -398,22 +418,24 @@
                     <p>${order.productName} (${order.quantity}x)</p>
                     <p>Total: Rp${order.total.toLocaleString()}</p>
                     <p>Status: ${order.status.toUpperCase()}</p>
+                    ${order.status === 'completed' ? '<i class="bi bi-check-circle"></i>' : ''}
+                    ${order.status === 'failed' ? '<i class="bi bi-x-circle"></i>' : ''}
                 </div>
             `).join('');
         }
     
-        // Toggle panel status
+        // Toggle Panel Status
         function toggleStatus() {
             statusVisible = !statusVisible;
             document.getElementById('orderStatus').style.display = statusVisible ? 'block' : 'none';
         }
     
-        // Simpan data
+        // Simpan Data
         function saveOrders() {
             localStorage.setItem('orders', JSON.stringify(orders));
         }
     
-        // Loading indicator
+        // Loading Indicator
         function showLoading() {
             document.querySelector('.loading').style.display = 'flex';
         }
@@ -430,7 +452,7 @@
             setTimeout(() => notif.style.display = 'none', 5000);
         }
     
-        // Jalankan aplikasi
+        // Jalankan Aplikasi
         init();
     </script>
 </body>
